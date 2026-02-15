@@ -11,6 +11,8 @@ Usage:
 import argparse
 import csv
 import math
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -24,7 +26,6 @@ from core.decoder import (
     BOS_ID, EOS_ID, PAD_ID,
     build_aptamer_decoder, compute_loss, greedy_decode,
 )
-from aux.plot_metrics import plot_run
 
 
 def _levenshtein(s: list[int], t: list[int]) -> int:
@@ -322,8 +323,11 @@ def main():
                 "val_ed_ar": f"{val_stats['ed_ar']:.6f}",
             })
 
-        # Update metrics plot
-        plot_run(run_dir, save=True, headless=True)
+        # Update metrics plot (subprocess to avoid GUI windows)
+        subprocess.run(
+            [sys.executable, "-m", "aux.plot_metrics", str(run_dir), "--save"],
+            check=False,
+        )
 
         if val_loss < best_val:
             best_val = val_loss

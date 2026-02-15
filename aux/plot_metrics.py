@@ -23,7 +23,7 @@ METRIC_GROUPS = [
     ("Loss",                    "train_loss",       "val_loss",       True),
     ("Perplexity",              "train_perplexity", "val_perplexity", True),
     ("Exact Match",             "train_em",         "val_em",         False),
-    ("Edit Distance (TF)",      "train_ed_tf",      "val_ed_tf",     True),
+    ("Edit Distance (TF)",      "train_ed_tf",      "val_ed_tf",      True),
     ("Edit Distance (AR)",      None,               "val_ed_ar",      True),
 ]
 
@@ -35,7 +35,7 @@ def _best_marker(series: pd.Series, lower_is_better: bool) -> int:
     return int(series.idxmax())
 
 
-def plot_run(run_dir: Path, save: bool = False, fmt: str = "png", headless: bool = False) -> None:
+def plot_run(run_dir: Path, save: bool = False, fmt: str = "png") -> None:
     metrics_path = run_dir / "metrics.csv"
     if not metrics_path.exists():
         raise FileNotFoundError(f"No metrics.csv in {run_dir}")
@@ -105,8 +105,8 @@ def plot_run(run_dir: Path, save: bool = False, fmt: str = "png", headless: bool
     if save:
         out = run_dir / f"metrics.{fmt}"
         fig.savefig(out, dpi=150, bbox_inches="tight")
-        print(f"Saved: {out}")
-    if not headless:
+        # print(f"Saved: {out}")
+    else:
         plt.show()
     plt.close(fig)
 
