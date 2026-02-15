@@ -20,7 +20,35 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from core.dataset import AptamerDecoderDataset, collate_fn, train_val_split
-from core.decoder import PAD_ID, build_aptamer_decoder, compute_loss
+from core.decoder import EOS_ID, PAD_ID, build_aptamer_decoder, compute_loss
+
+
+def _levenshtein(s: list[int], t: list[int]) -> int:
+    """Levenshtein distance between two integer sequences."""
+    n, m = len(s), len(t)
+    if n == 0:
+        return m
+    if m == 0:
+        return n
+    prev = list(range(m + 1))
+    curr = [0] * (m + 1)
+    for i in range(1, n + 1):
+        curr[0] = i
+        for j in range(1, m + 1):
+            cost = 0 if s[i - 1] == t[j - 1] else 1
+            curr[j] = min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost)
+        prev, curr = curr, prev
+    return prev[m]
+
+
+def _extract_seq(ids: torch.Tensor) -> list[int]:
+    """Extract token ids from a single sequence, stripping PAD/EOS."""
+    out = []
+    for v in ids.tolist():
+        if v in (PAD_ID, EOS_ID):
+            break
+        out.append(v)
+    return out
 
 
 def get_args():
@@ -43,15 +71,16 @@ def get_args():
 
 
 class _MetricsAccumulator:
-    """Accumulates loss, accuracy, RMSE, R2 over batches (on non-PAD tokens)."""
+    """Accumulates loss, perplexity, exact match, edit distance over batches."""
 
     def __init__(self):
         self.total_loss = 0.0
         self.n_batches = 0
-        self.correct = 0
+        self.total_nll = 0.0   # sum of per-token NLL (no label smoothing)
         self.total_tokens = 0
-        self.ss_res = 0.0  # sum of (pred_prob - 1)^2 for correct class + pred_prob^2 for others
-        self.ss_tot = 0.0  # sum of (one_hot - mean)^2
+        self.exact_matches = 0
+        self.total_seqs = 0
+        self.total_edit_dist = 0.0
 
     def update(self, logits: torch.Tensor, targets: torch.Tensor, loss_val: float):
         """logits: [B, L, V], targets: [B, L]."""
@@ -59,34 +88,37 @@ class _MetricsAccumulator:
         self.n_batches += 1
 
         mask = targets != PAD_ID  # [B, L]
-        preds = logits.argmax(dim=-1)  # [B, L]
-        self.correct += (preds[mask] == targets[mask]).sum().item()
-        n = mask.sum().item()
-        self.total_tokens += n
+        n_tokens = mask.sum().item()
+        self.total_tokens += n_tokens
 
-        # RMSE & R2: compare softmax probabilities vs one-hot targets
-        probs = F.softmax(logits, dim=-1)  # [B, L, V]
-        V = probs.size(-1)
-        # Gather prob of correct class at each position
-        target_probs = probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)  # [B, L]
-        # Per-token: MSE between prob vector and one-hot = sum_v (p_v - t_v)^2
-        #   = (1 - p_correct)^2 + sum_{v != correct} p_v^2
-        #   = 1 - 2*p_correct + sum_v p_v^2
-        prob_sq_sum = (probs ** 2).sum(dim=-1)  # [B, L]
-        per_token_mse = 1.0 - 2.0 * target_probs + prob_sq_sum  # [B, L]
-        self.ss_res += per_token_mse[mask].sum().item()
-        # SS_tot: variance of one-hot target = mean over V of (t_v - 1/V)^2
-        # For one-hot: 1 position has value 1, rest 0. Mean = 1/V.
-        # ss_tot_per_token = (1 - 1/V)^2 + (V-1)*(0 - 1/V)^2 = (V-1)/V
-        self.ss_tot += n * (V - 1) / V
+        # NLL for perplexity (without label smoothing)
+        log_probs = F.log_softmax(logits, dim=-1)  # [B, L, V]
+        token_nll = -log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)  # [B, L]
+        self.total_nll += token_nll[mask].sum().item()
+
+        # Greedy predictions per sequence -> exact match & edit distance
+        preds = logits.argmax(dim=-1)  # [B, L]
+        B = targets.size(0)
+        self.total_seqs += B
+        for b in range(B):
+            pred_seq = _extract_seq(preds[b])
+            tgt_seq = _extract_seq(targets[b])
+            if pred_seq == tgt_seq:
+                self.exact_matches += 1
+            self.total_edit_dist += _levenshtein(pred_seq, tgt_seq)
 
     def compute(self) -> dict:
         loss = self.total_loss / max(1, self.n_batches)
-        acc = self.correct / max(1, self.total_tokens)
-        mse = self.ss_res / max(1, self.total_tokens)
-        rmse = math.sqrt(max(0, mse))
-        r2 = 1.0 - self.ss_res / max(self.ss_tot, 1e-8)
-        return {"loss": loss, "accuracy": acc, "rmse": rmse, "r2": r2}
+        avg_nll = self.total_nll / max(1, self.total_tokens)
+        perplexity = math.exp(min(avg_nll, 100))  # clamp to avoid overflow
+        exact_match = self.exact_matches / max(1, self.total_seqs)
+        edit_dist = self.total_edit_dist / max(1, self.total_seqs)
+        return {
+            "loss": loss,
+            "perplexity": perplexity,
+            "exact_match": exact_match,
+            "edit_distance": edit_dist,
+        }
 
 
 def main():
@@ -141,8 +173,8 @@ def main():
     metrics_path = run_dir / "metrics.csv"
     metrics_fields = [
         "epoch",
-        "train_loss", "train_accuracy", "train_rmse", "train_r2",
-        "val_loss", "val_accuracy", "val_rmse", "val_r2",
+        "train_loss", "train_perplexity", "train_exact_match", "train_edit_distance",
+        "val_loss", "val_perplexity", "val_exact_match", "val_edit_distance",
     ]
     with open(metrics_path, "w", newline="") as f:
         csv.DictWriter(f, fieldnames=metrics_fields).writeheader()
@@ -190,10 +222,10 @@ def main():
 
         print(
             f"Epoch {ep+1}/{args.epochs}  "
-            f"train[loss={train_stats['loss']:.4f} acc={train_stats['accuracy']:.4f} "
-            f"rmse={train_stats['rmse']:.4f} r2={train_stats['r2']:.4f}]  "
-            f"val[loss={val_stats['loss']:.4f} acc={val_stats['accuracy']:.4f} "
-            f"rmse={val_stats['rmse']:.4f} r2={val_stats['r2']:.4f}]"
+            f"train[loss={train_stats['loss']:.4f} ppl={train_stats['perplexity']:.2f} "
+            f"em={train_stats['exact_match']:.4f} ed={train_stats['edit_distance']:.2f}]  "
+            f"val[loss={val_stats['loss']:.4f} ppl={val_stats['perplexity']:.2f} "
+            f"em={val_stats['exact_match']:.4f} ed={val_stats['edit_distance']:.2f}]"
         )
         val_loss = val_stats["loss"]
 
@@ -202,13 +234,13 @@ def main():
             csv.DictWriter(f, fieldnames=metrics_fields).writerow({
                 "epoch": ep + 1,
                 "train_loss": f"{train_stats['loss']:.6f}",
-                "train_accuracy": f"{train_stats['accuracy']:.6f}",
-                "train_rmse": f"{train_stats['rmse']:.6f}",
-                "train_r2": f"{train_stats['r2']:.6f}",
+                "train_perplexity": f"{train_stats['perplexity']:.6f}",
+                "train_exact_match": f"{train_stats['exact_match']:.6f}",
+                "train_edit_distance": f"{train_stats['edit_distance']:.6f}",
                 "val_loss": f"{val_stats['loss']:.6f}",
-                "val_accuracy": f"{val_stats['accuracy']:.6f}",
-                "val_rmse": f"{val_stats['rmse']:.6f}",
-                "val_r2": f"{val_stats['r2']:.6f}",
+                "val_perplexity": f"{val_stats['perplexity']:.6f}",
+                "val_exact_match": f"{val_stats['exact_match']:.6f}",
+                "val_edit_distance": f"{val_stats['edit_distance']:.6f}",
             })
 
         if val_loss < best_val:
