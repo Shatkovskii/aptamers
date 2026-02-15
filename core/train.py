@@ -24,6 +24,7 @@ from core.decoder import (
     BOS_ID, EOS_ID, PAD_ID,
     build_aptamer_decoder, compute_loss, greedy_decode,
 )
+from aux.plot_metrics import plot_run
 
 
 def _levenshtein(s: list[int], t: list[int]) -> int:
@@ -320,6 +321,9 @@ def main():
                 "val_ed_tf": f"{val_stats['ed_tf']:.6f}",
                 "val_ed_ar": f"{val_stats['ed_ar']:.6f}",
             })
+
+        # Update metrics plot
+        plot_run(run_dir, save=True)
 
         if val_loss < best_val:
             best_val = val_loss

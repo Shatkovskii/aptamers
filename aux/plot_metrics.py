@@ -108,6 +108,7 @@ def plot_run(run_dir: Path, save: bool = False, fmt: str = "png") -> None:
         print(f"Saved: {out}")
     else:
         plt.show()
+    plt.close(fig)
 
 
 def main():
