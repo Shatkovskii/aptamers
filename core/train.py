@@ -102,12 +102,11 @@ class _MetricsAccumulator:
         self.n_batches = 0
         self.total_nll = 0.0
         self.total_tokens = 0
-        # Teacher-forcing metrics
-        self.em_tf = 0
+        # Sequence-level metrics
+        self.em = 0
         self.ned_tf = 0.0
         self.total_seqs = 0
-        # Autoregressive metrics (filled via update_ar)
-        self.em_ar = 0
+        # Autoregressive edit distance (filled via update_ar)
         self.ned_ar = 0.0
         self.total_seqs_ar = 0
 
@@ -133,7 +132,7 @@ class _MetricsAccumulator:
             pred_seq = _extract_seq(preds[b])
             tgt_seq = _extract_seq(targets[b])
             if pred_seq == tgt_seq:
-                self.em_tf += 1
+                self.em += 1
             self.ned_tf += _norm_edit_distance(pred_seq, tgt_seq)
 
     def update_ar(self, generated: torch.Tensor, targets: torch.Tensor):
@@ -143,24 +142,20 @@ class _MetricsAccumulator:
         for b in range(B):
             gen_seq = _extract_seq(generated[b])
             tgt_seq = _extract_seq(targets[b])
-            if gen_seq == tgt_seq:
-                self.em_ar += 1
             self.ned_ar += _norm_edit_distance(gen_seq, tgt_seq)
 
     def compute(self) -> dict:
         loss = self.total_loss / max(1, self.n_batches)
         avg_nll = self.total_nll / max(1, self.total_tokens)
         perplexity = math.exp(min(avg_nll, 100))
-        em_tf = self.em_tf / max(1, self.total_seqs)
+        em = self.em / max(1, self.total_seqs)
         ned_tf = self.ned_tf / max(1, self.total_seqs)
-        em_ar = self.em_ar / max(1, self.total_seqs_ar) if self.total_seqs_ar > 0 else 0.0
         ned_ar = self.ned_ar / max(1, self.total_seqs_ar) if self.total_seqs_ar > 0 else 0.0
         return {
             "loss": loss,
             "perplexity": perplexity,
-            "em_tf": em_tf,
+            "em": em,
             "ed_tf": ned_tf,
-            "em_ar": em_ar,
             "ed_ar": ned_ar,
         }
 
@@ -245,9 +240,9 @@ def main():
     metrics_path = run_dir / "metrics.csv"
     metrics_fields = [
         "epoch",
-        "train_loss", "train_perplexity", "train_em_tf", "train_ed_tf",
-        "val_loss", "val_perplexity", "val_em_tf", "val_ed_tf",
-        "val_em_ar", "val_ed_ar",
+        "train_loss", "train_perplexity", "train_em", "train_ed_tf",
+        "val_loss", "val_perplexity", "val_em", "val_ed_tf",
+        "val_ed_ar",
     ]
     with open(metrics_path, "w", newline="") as f:
         csv.DictWriter(f, fieldnames=metrics_fields).writeheader()
@@ -304,10 +299,10 @@ def main():
         print(
             f"Epoch {ep+1}/{args.epochs}  "
             f"train[loss={train_stats['loss']:.4f} ppl={train_stats['perplexity']:.2f} "
-            f"em_tf={train_stats['em_tf']:.4f} ed_tf={train_stats['ed_tf']:.4f}]  "
+            f"em={train_stats['em']:.4f} ed_tf={train_stats['ed_tf']:.4f}]  "
             f"val[loss={val_stats['loss']:.4f} ppl={val_stats['perplexity']:.2f} "
-            f"em_tf={val_stats['em_tf']:.4f} ed_tf={val_stats['ed_tf']:.4f} "
-            f"em_ar={val_stats['em_ar']:.4f} ed_ar={val_stats['ed_ar']:.4f}]"
+            f"em={val_stats['em']:.4f} ed_tf={val_stats['ed_tf']:.4f} "
+            f"ed_ar={val_stats['ed_ar']:.4f}]"
         )
         val_loss = val_stats["loss"]
 
@@ -317,13 +312,12 @@ def main():
                 "epoch": ep + 1,
                 "train_loss": f"{train_stats['loss']:.6f}",
                 "train_perplexity": f"{train_stats['perplexity']:.6f}",
-                "train_em_tf": f"{train_stats['em_tf']:.6f}",
+                "train_em": f"{train_stats['em']:.6f}",
                 "train_ed_tf": f"{train_stats['ed_tf']:.6f}",
                 "val_loss": f"{val_stats['loss']:.6f}",
                 "val_perplexity": f"{val_stats['perplexity']:.6f}",
-                "val_em_tf": f"{val_stats['em_tf']:.6f}",
+                "val_em": f"{val_stats['em']:.6f}",
                 "val_ed_tf": f"{val_stats['ed_tf']:.6f}",
-                "val_em_ar": f"{val_stats['em_ar']:.6f}",
                 "val_ed_ar": f"{val_stats['ed_ar']:.6f}",
             })
 
