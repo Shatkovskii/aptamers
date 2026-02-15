@@ -1,0 +1,6 @@
+__pycache__/
+.idea/
+.venv
+.env
+legacy/data/*
+legacy/outputs/*

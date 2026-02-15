@@ -1,0 +1,19 @@
+experiment_name: 'Transformer_MultAttention_finetune'
+model_basename: 'Transformer_MultAttention_finetune'
+batch_size: 16
+num_epochs: 100
+save_every: 50
+dropout: 0.1
+lr: 1e-9 #tried 1e-6, 1e-7, 1e-8
+seq_len: 182                                      #max_len + 2 for SOS and EOS tokens
+num_heads: 8
+num_layers: 2
+d_model: 1280
+d_ff: 256
+input_dim: 2304
+model_folder: 'checkpoints'
+preload: True
+kmer: 1
+comments: 'Transformer_MultAttention, balanced sampler, finetune'
+patience: 10                                      #EarlyStopping
+delta_for_early_stop: 0.001                        #EarlyStopping

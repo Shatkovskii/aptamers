@@ -1,0 +1,22 @@
+experiment_name: 'Transformer_kld_finetuned_auto'
+model_basename: 'Transformer_kld_finetuned_auto'
+batch_size: 32
+num_epochs: 10
+save_every: 5
+dropout: 0.1
+lr: 1e-7   #tried 1e-4, 1e-5, 1e-6, 1e-7 1e-3 #Если новый датасет маленький, можно уменьшить lr (например, 1e-5) — это поможет не разрушить старые веса.
+seq_len: 182     #187                                 #max_len + 2 for SOS and EOS tokens
+num_heads: 8
+num_layers: 2
+d_model: 1280
+d_ff: 256
+latent_dim: 128
+input_dim: 2304
+beta: 1000
+model_folder: 'checkpoints'
+preload: True
+encoder_hidden_dim: 512
+kmer: 1
+comments: 'Transformer trained with mirna, finetuned with aptamers, autoregressive'
+patience: 20                                      #EarlyStopping
+delta_for_early_stop: 0.01                        #EarlyStopping
