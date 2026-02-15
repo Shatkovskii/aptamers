@@ -35,7 +35,7 @@ def _best_marker(series: pd.Series, lower_is_better: bool) -> int:
     return int(series.idxmax())
 
 
-def plot_run(run_dir: Path, save: bool = False, fmt: str = "png") -> None:
+def plot_run(run_dir: Path, save: bool = False, fmt: str = "png", headless: bool = False) -> None:
     metrics_path = run_dir / "metrics.csv"
     if not metrics_path.exists():
         raise FileNotFoundError(f"No metrics.csv in {run_dir}")
@@ -106,7 +106,7 @@ def plot_run(run_dir: Path, save: bool = False, fmt: str = "png") -> None:
         out = run_dir / f"metrics.{fmt}"
         fig.savefig(out, dpi=150, bbox_inches="tight")
         print(f"Saved: {out}")
-    else:
+    if not headless:
         plt.show()
     plt.close(fig)
 

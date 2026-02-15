@@ -323,7 +323,7 @@ def main():
             })
 
         # Update metrics plot
-        plot_run(run_dir, save=True)
+        plot_run(run_dir, save=True, headless=True)
 
         if val_loss < best_val:
             best_val = val_loss
