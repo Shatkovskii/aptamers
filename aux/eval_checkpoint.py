@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Evaluate a saved checkpoint (e.g. data/checkpoints/last.pt) on train/val splits
 and produce a metrics.csv file.

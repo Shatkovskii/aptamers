@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Train aptamer decoder. Run after encoding: python -m core.encoder
 
