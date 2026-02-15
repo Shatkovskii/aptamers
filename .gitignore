@@ -5,3 +5,4 @@ __pycache__/
 .env
 legacy/data/*
 legacy/outputs/*
+checkpoints/

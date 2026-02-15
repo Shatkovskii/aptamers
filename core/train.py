@@ -9,7 +9,9 @@ Usage:
 """
 
 import argparse
+import csv
 import math
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -25,7 +27,7 @@ def get_args():
     p = argparse.ArgumentParser(description="Train aptamer decoder")
     p.add_argument("--csv", default="data/3_checked_intersections_180t.csv", help="Dataset CSV")
     p.add_argument("--embeddings", default="data/esm_embeddings", help="ESM embeddings dir")
-    p.add_argument("--output", default="data/checkpoints", help="Save checkpoints here")
+    p.add_argument("--output", default="checkpoints", help="Save checkpoints here")
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--lr", type=float, default=1e-4)
@@ -129,8 +131,22 @@ def main():
         return 1.0
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
 
-    out_dir = Path(args.output)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # Create run directory with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path(args.output) / timestamp
+    run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Run directory: {run_dir}")
+
+    # Prepare metrics CSV
+    metrics_path = run_dir / "metrics.csv"
+    metrics_fields = [
+        "epoch",
+        "train_loss", "train_accuracy", "train_rmse", "train_r2",
+        "val_loss", "val_accuracy", "val_rmse", "val_r2",
+    ]
+    with open(metrics_path, "w", newline="") as f:
+        csv.DictWriter(f, fieldnames=metrics_fields).writeheader()
+
     best_val = float("inf")
     no_improve = 0
 
@@ -181,18 +197,32 @@ def main():
         )
         val_loss = val_stats["loss"]
 
+        # Append metrics to CSV
+        with open(metrics_path, "a", newline="") as f:
+            csv.DictWriter(f, fieldnames=metrics_fields).writerow({
+                "epoch": ep + 1,
+                "train_loss": f"{train_stats['loss']:.6f}",
+                "train_accuracy": f"{train_stats['accuracy']:.6f}",
+                "train_rmse": f"{train_stats['rmse']:.6f}",
+                "train_r2": f"{train_stats['r2']:.6f}",
+                "val_loss": f"{val_stats['loss']:.6f}",
+                "val_accuracy": f"{val_stats['accuracy']:.6f}",
+                "val_rmse": f"{val_stats['rmse']:.6f}",
+                "val_r2": f"{val_stats['r2']:.6f}",
+            })
+
         if val_loss < best_val:
             best_val = val_loss
             no_improve = 0
-            torch.save({"model": model.state_dict(), "epoch": ep, "val_loss": val_loss}, out_dir / "best.pt")
+            torch.save({"model": model.state_dict(), "epoch": ep, "val_loss": val_loss}, run_dir / "best.pt")
         else:
             no_improve += 1
             if no_improve >= args.early_stopping:
                 print(f"Early stopping after {ep+1} epochs")
                 break
-        torch.save({"model": model.state_dict(), "epoch": ep, "val_loss": val_loss}, out_dir / "last.pt")
+        torch.save({"model": model.state_dict(), "epoch": ep, "val_loss": val_loss}, run_dir / "last.pt")
 
-    print(f"Best val_loss: {best_val:.4f}. Checkpoints in {out_dir}")
+    print(f"Best val_loss: {best_val:.4f}. Run directory: {run_dir}")
     return model
 
 
