@@ -20,7 +20,10 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from core.dataset import AptamerDecoderDataset, collate_fn, train_val_split
-from core.decoder import EOS_ID, PAD_ID, build_aptamer_decoder, compute_loss
+from core.decoder import (
+    BOS_ID, EOS_ID, PAD_ID,
+    build_aptamer_decoder, compute_loss, greedy_decode,
+)
 
 
 def _levenshtein(s: list[int], t: list[int]) -> int:
@@ -42,13 +45,22 @@ def _levenshtein(s: list[int], t: list[int]) -> int:
 
 
 def _extract_seq(ids: torch.Tensor) -> list[int]:
-    """Extract token ids from a single sequence, stripping PAD/EOS."""
+    """Extract token ids from a single sequence, stripping BOS/PAD/EOS."""
     out = []
     for v in ids.tolist():
         if v in (PAD_ID, EOS_ID):
             break
+        if v == BOS_ID:
+            continue
         out.append(v)
     return out
+
+
+def _norm_edit_distance(s: list[int], t: list[int]) -> float:
+    """Levenshtein distance normalized by max(len(s), len(t)). Returns 0..1."""
+    d = _levenshtein(s, t)
+    maxlen = max(len(s), len(t))
+    return d / maxlen if maxlen > 0 else 0.0
 
 
 def get_args():
@@ -71,53 +83,73 @@ def get_args():
 
 
 class _MetricsAccumulator:
-    """Accumulates loss, perplexity, exact match, edit distance over batches."""
+    """Accumulates loss, perplexity, teacher-forcing & autoregressive seq metrics."""
 
     def __init__(self):
         self.total_loss = 0.0
         self.n_batches = 0
-        self.total_nll = 0.0   # sum of per-token NLL (no label smoothing)
+        self.total_nll = 0.0
         self.total_tokens = 0
-        self.exact_matches = 0
+        # Teacher-forcing metrics
+        self.em_tf = 0
+        self.ned_tf = 0.0
         self.total_seqs = 0
-        self.total_edit_dist = 0.0
+        # Autoregressive metrics (filled via update_ar)
+        self.em_ar = 0
+        self.ned_ar = 0.0
+        self.total_seqs_ar = 0
 
     def update(self, logits: torch.Tensor, targets: torch.Tensor, loss_val: float):
-        """logits: [B, L, V], targets: [B, L]."""
+        """Update with teacher-forcing logits. logits: [B, L, V], targets: [B, L]."""
         self.total_loss += loss_val
         self.n_batches += 1
 
-        mask = targets != PAD_ID  # [B, L]
+        mask = targets != PAD_ID
         n_tokens = mask.sum().item()
         self.total_tokens += n_tokens
 
-        # NLL for perplexity (without label smoothing)
-        log_probs = F.log_softmax(logits, dim=-1)  # [B, L, V]
-        token_nll = -log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)  # [B, L]
+        # NLL for perplexity (no label smoothing)
+        log_probs = F.log_softmax(logits, dim=-1)
+        token_nll = -log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
         self.total_nll += token_nll[mask].sum().item()
 
-        # Greedy predictions per sequence -> exact match & edit distance
-        preds = logits.argmax(dim=-1)  # [B, L]
+        # Teacher-forcing: greedy next-token prediction vs target
+        preds = logits.argmax(dim=-1)
         B = targets.size(0)
         self.total_seqs += B
         for b in range(B):
             pred_seq = _extract_seq(preds[b])
             tgt_seq = _extract_seq(targets[b])
             if pred_seq == tgt_seq:
-                self.exact_matches += 1
-            self.total_edit_dist += _levenshtein(pred_seq, tgt_seq)
+                self.em_tf += 1
+            self.ned_tf += _norm_edit_distance(pred_seq, tgt_seq)
+
+    def update_ar(self, generated: torch.Tensor, targets: torch.Tensor):
+        """Update with autoregressive generated sequences. generated/targets: [B, L]."""
+        B = targets.size(0)
+        self.total_seqs_ar += B
+        for b in range(B):
+            gen_seq = _extract_seq(generated[b])
+            tgt_seq = _extract_seq(targets[b])
+            if gen_seq == tgt_seq:
+                self.em_ar += 1
+            self.ned_ar += _norm_edit_distance(gen_seq, tgt_seq)
 
     def compute(self) -> dict:
         loss = self.total_loss / max(1, self.n_batches)
         avg_nll = self.total_nll / max(1, self.total_tokens)
-        perplexity = math.exp(min(avg_nll, 100))  # clamp to avoid overflow
-        exact_match = self.exact_matches / max(1, self.total_seqs)
-        edit_dist = self.total_edit_dist / max(1, self.total_seqs)
+        perplexity = math.exp(min(avg_nll, 100))
+        em_tf = self.em_tf / max(1, self.total_seqs)
+        ned_tf = self.ned_tf / max(1, self.total_seqs)
+        em_ar = self.em_ar / max(1, self.total_seqs_ar) if self.total_seqs_ar > 0 else 0.0
+        ned_ar = self.ned_ar / max(1, self.total_seqs_ar) if self.total_seqs_ar > 0 else 0.0
         return {
             "loss": loss,
             "perplexity": perplexity,
-            "exact_match": exact_match,
-            "edit_distance": edit_dist,
+            "em_tf": em_tf,
+            "ed_tf": ned_tf,
+            "em_ar": em_ar,
+            "ed_ar": ned_ar,
         }
 
 
@@ -173,8 +205,9 @@ def main():
     metrics_path = run_dir / "metrics.csv"
     metrics_fields = [
         "epoch",
-        "train_loss", "train_perplexity", "train_exact_match", "train_edit_distance",
-        "val_loss", "val_perplexity", "val_exact_match", "val_edit_distance",
+        "train_loss", "train_perplexity", "train_em_tf", "train_ed_tf",
+        "val_loss", "val_perplexity", "val_em_tf", "val_ed_tf",
+        "val_em_ar", "val_ed_ar",
     ]
     with open(metrics_path, "w", newline="") as f:
         csv.DictWriter(f, fieldnames=metrics_fields).writeheader()
@@ -216,16 +249,25 @@ def main():
                     batch["mask_ab"], batch["mask_t1"], batch["mask_t2"],
                     batch["y_in"], batch["mask_y"],
                 )
-                loss = compute_loss(logits, batch["y_out"], label_smoothing=0.1)
+                loss = compute_loss(logits, batch["y_out"], label_smoothing=0.0)
                 val_metrics.update(logits, batch["y_out"], loss.item())
+                # Autoregressive generation for AR metrics
+                generated = greedy_decode(
+                    model,
+                    batch["E_ab"], batch["E_t_ab"], batch["E_t_apt"],
+                    batch["mask_ab"], batch["mask_t1"], batch["mask_t2"],
+                    max_len=args.max_len, device=device,
+                )
+                val_metrics.update_ar(generated, batch["y_out"])
         val_stats = val_metrics.compute()
 
         print(
             f"Epoch {ep+1}/{args.epochs}  "
             f"train[loss={train_stats['loss']:.4f} ppl={train_stats['perplexity']:.2f} "
-            f"em={train_stats['exact_match']:.4f} ed={train_stats['edit_distance']:.2f}]  "
+            f"em_tf={train_stats['em_tf']:.4f} ed_tf={train_stats['ed_tf']:.4f}]  "
             f"val[loss={val_stats['loss']:.4f} ppl={val_stats['perplexity']:.2f} "
-            f"em={val_stats['exact_match']:.4f} ed={val_stats['edit_distance']:.2f}]"
+            f"em_tf={val_stats['em_tf']:.4f} ed_tf={val_stats['ed_tf']:.4f} "
+            f"em_ar={val_stats['em_ar']:.4f} ed_ar={val_stats['ed_ar']:.4f}]"
         )
         val_loss = val_stats["loss"]
 
@@ -235,12 +277,14 @@ def main():
                 "epoch": ep + 1,
                 "train_loss": f"{train_stats['loss']:.6f}",
                 "train_perplexity": f"{train_stats['perplexity']:.6f}",
-                "train_exact_match": f"{train_stats['exact_match']:.6f}",
-                "train_edit_distance": f"{train_stats['edit_distance']:.6f}",
+                "train_em_tf": f"{train_stats['em_tf']:.6f}",
+                "train_ed_tf": f"{train_stats['ed_tf']:.6f}",
                 "val_loss": f"{val_stats['loss']:.6f}",
                 "val_perplexity": f"{val_stats['perplexity']:.6f}",
-                "val_exact_match": f"{val_stats['exact_match']:.6f}",
-                "val_edit_distance": f"{val_stats['edit_distance']:.6f}",
+                "val_em_tf": f"{val_stats['em_tf']:.6f}",
+                "val_ed_tf": f"{val_stats['ed_tf']:.6f}",
+                "val_em_ar": f"{val_stats['em_ar']:.6f}",
+                "val_ed_ar": f"{val_stats['ed_ar']:.6f}",
             })
 
         if val_loss < best_val:
