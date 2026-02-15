@@ -78,7 +78,19 @@ def get_args():
     p.add_argument("--early-stopping", type=int, default=5, help="Stop after N epochs without improvement")
     p.add_argument("--device", default=None)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--group-split", action="store_true", help="Split by (target_seq_ab, target_seq_apt) groups")
+    p.add_argument(
+        "--split-mode",
+        default="random",
+        choices=["random", "target", "antibody", "aptamer", "full"],
+        help=(
+            "Validation split strategy: "
+            "random (default, no grouping), "
+            "target (group by target_seq_ab + target_seq_apt), "
+            "antibody (group by Antibody Sequence), "
+            "aptamer (group by Aptamer Sequence), "
+            "full (group by Antibody Sequence + target_seq_ab + target_seq_apt)"
+        ),
+    )
     return p.parse_args()
 
 
@@ -173,7 +185,14 @@ def main():
     df = df[df.index.isin(existing)]
     print(f"Samples with embeddings: {len(df)}")
 
-    group_cols = ["target_seq_ab", "target_seq_apt"] if args.group_split else None
+    _SPLIT_MODE_COLS = {
+        "random": None,
+        "target": ["target_seq_ab", "target_seq_apt"],
+        "antibody": ["Antibody Sequence"],
+        "aptamer": ["Aptamer Sequence"],
+        "full": ["Antibody Sequence", "target_seq_ab", "target_seq_apt"],
+    }
+    group_cols = _SPLIT_MODE_COLS[args.split_mode]
     train_df, val_df = train_val_split(df, val_ratio=args.val_ratio, seed=args.seed, group_cols=group_cols)
     print(f"Train: {len(train_df)}, Val: {len(val_df)}")
 
@@ -209,7 +228,8 @@ def main():
         f.write(f"Train size: {len(train_df)}\n")
         f.write(f"Val size: {len(val_df)}\n")
         f.write(f"Val ratio: {args.val_ratio}\n")
-        f.write(f"Group split: {args.group_split}\n")
+        f.write(f"Split mode: {args.split_mode}\n")
+        f.write(f"Group columns: {group_cols}\n")
         f.write(f"Seed: {args.seed}\n")
         f.write(f"\n")
         f.write(f"epochs: {args.epochs}\n")
