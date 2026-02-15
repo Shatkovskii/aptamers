@@ -4,7 +4,7 @@ Train aptamer decoder. Run after encoding: python -m core.encoder
 
 Usage:
     python -m core.train
-    python -m core.train --csv data/3_checked_intersections_180t.csv --embeddings data/esm_embeddings
+    python -m core.train --csv data/preprocessed_data.csv --embeddings data/esm_embeddings
     python -m core.train --epochs 50 --batch-size 32
 """
 
@@ -25,7 +25,7 @@ from core.decoder import PAD_ID, build_aptamer_decoder, compute_loss
 
 def get_args():
     p = argparse.ArgumentParser(description="Train aptamer decoder")
-    p.add_argument("--csv", default="data/3_checked_intersections_180t.csv", help="Dataset CSV")
+    p.add_argument("--csv", default="data/preprocessed_data.csv", help="Dataset CSV")
     p.add_argument("--embeddings", default="data/esm_embeddings", help="ESM embeddings dir")
     p.add_argument("--output", default="checkpoints", help="Save checkpoints here")
     p.add_argument("--epochs", type=int, default=30)
