@@ -201,6 +201,26 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Run directory: {run_dir}")
 
+    # Save run description
+    with open(run_dir / "description.txt", "w") as f:
+        f.write(f"Dataset: {args.csv}\n")
+        f.write(f"Embeddings: {args.embeddings}\n")
+        f.write(f"Total samples with embeddings: {len(df)}\n")
+        f.write(f"Train size: {len(train_df)}\n")
+        f.write(f"Val size: {len(val_df)}\n")
+        f.write(f"Val ratio: {args.val_ratio}\n")
+        f.write(f"Group split: {args.group_split}\n")
+        f.write(f"Seed: {args.seed}\n")
+        f.write(f"\n")
+        f.write(f"epochs: {args.epochs}\n")
+        f.write(f"batch_size: {args.batch_size}\n")
+        f.write(f"lr: {args.lr}\n")
+        f.write(f"weight_decay: {args.weight_decay}\n")
+        f.write(f"warmup_steps: {args.warmup_steps}\n")
+        f.write(f"max_len: {args.max_len}\n")
+        f.write(f"early_stopping: {args.early_stopping}\n")
+        f.write(f"device: {device}\n")
+
     # Prepare metrics CSV
     metrics_path = run_dir / "metrics.csv"
     metrics_fields = [
