@@ -58,7 +58,7 @@ def plot_run(run_dir: Path, save: bool = False, fmt: str = "png") -> None:
         has_val = val_col is not None and val_col in df.columns
 
         if has_train:
-            ax.plot(epochs, df[train_col], marker="o", markersize=4,
+            ax.plot(epochs, df[train_col], # marker="o", markersize=4,
                     color=palette["train"], linewidth=1.8, label="train")
             best_idx = _best_marker(df[train_col], lower_better)
             ax.scatter(epochs.iloc[best_idx], df[train_col].iloc[best_idx],
@@ -66,7 +66,7 @@ def plot_run(run_dir: Path, save: bool = False, fmt: str = "png") -> None:
                        edgecolors=palette["train"], linewidths=2)
 
         if has_val:
-            ax.plot(epochs, df[val_col], marker="s", markersize=4,
+            ax.plot(epochs, df[val_col], # marker="o", markersize=4,
                     color=palette["val"], linewidth=1.8, label="val")
             best_idx = _best_marker(df[val_col], lower_better)
             ax.scatter(epochs.iloc[best_idx], df[val_col].iloc[best_idx],
